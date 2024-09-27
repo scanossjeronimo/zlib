@@ -1,8 +1,5 @@
 pipeline {
     parameters {
-        // REPOSITORY variables
-        string(name: 'GITHUB_TOKEN_ID', defaultValue: "gh-token", description: 'Github repository token credential id')
-
         // SCAN Variables
         string(name: 'SCANOSS_API_TOKEN_ID', defaultValue: "scanoss-token", description: 'The reference ID for the SCANOSS API TOKEN credential')
         string(name: 'SCANOSS_SBOM_IDENTIFY', defaultValue: "sbom.json", description: 'SCANOSS SBOM Identify filename')
@@ -53,7 +50,6 @@ pipeline {
                     // Checkout repository
                     dir("${env.SCANOSS_BUILD_BASE_PATH}/repository") {
                         git branch: 'main',
-                            credentialsId: params.GITHUB_TOKEN_ID,
                             url: env.REPOSITORY_URL
                     }
 
