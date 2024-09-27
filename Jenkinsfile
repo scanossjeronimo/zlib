@@ -9,8 +9,6 @@ pipeline {
         string(name: 'SCANOSS_SBOM_IGNORE', defaultValue: "sbom-ignore.json", description: 'SCANOSS SBOM Ignore filename')
         string(name: 'SCANOSS_CLI_DOCKER_IMAGE', defaultValue: "ghcr.io/scanoss/scanoss-py:latest", description: 'SCANOSS CLI Docker Image')
         booleanParam(name: 'ENABLE_DELTA_ANALYSIS', defaultValue: false, description: 'Analyze those files what have changed or new ones')
-        
-        // Manual trigger parameter
         booleanParam(name: 'MANUAL_TRIGGER', defaultValue: false, description: 'Trigger the pipeline manually')
     }
     agent any
@@ -18,16 +16,21 @@ pipeline {
         stage('SCANOSS') {
             when {
                 anyOf {
+                    expression { 
+                        echo "Manual Trigger: ${params.MANUAL_TRIGGER}"
+                        return params.MANUAL_TRIGGER 
+                    }
                     allOf {
-                        not { expression { return params.MANUAL_TRIGGER } }
                         expression { 
                             def payload = readJSON text: env.payload ?: '{}'
-                            return payload.pull_request != null && 
+                            echo "Payload: ${payload}"
+                            def result = payload.pull_request != null && 
                                    payload.pull_request.base.ref == 'main' && 
                                    payload.action == 'opened'
+                            echo "Pull Request Condition: ${result}"
+                            return result
                         }
                     }
-                    expression { return params.MANUAL_TRIGGER }
                 }
             }
 
@@ -40,6 +43,8 @@ pipeline {
             }
             steps {               
                 script {
+                    echo "SCANOSS stage is running"
+                    
                     // File names
                     env.SCANOSS_RESULTS_JSON_FILE = "scanoss-results.json"
                     env.SCANOSS_LICENSE_CSV_FILE = "scanoss_license_data.csv"
@@ -116,7 +121,7 @@ def copyleft() {
             currentBuild.result = "FAILURE"
         }
     } catch(e) {
-        echo e.getMessage()
+        echo "Error in copyleft analysis: ${e.getMessage()}"
         if (params.ABORT_ON_POLICY_FAILURE) {
             currentBuild.result = "FAILURE"
         }
@@ -153,26 +158,31 @@ def scan() {
 def deltaScan() {
     if (params.ENABLE_DELTA_ANALYSIS && !params.MANUAL_TRIGGER) {
         echo 'Delta Scan Analysis enabled'
-        def payloadJson = readJSON text: env.payload
-        def commits = payloadJson.commits
-        def destinationFolder = "${env.SCANOSS_BUILD_BASE_PATH}/delta"
-        def uniqueFileNames = new HashSet()
+        try {
+            def payloadJson = readJSON text: env.payload ?: '{}'
+            def commits = payloadJson.commits ?: []
+            def destinationFolder = "${env.SCANOSS_BUILD_BASE_PATH}/delta"
+            def uniqueFileNames = new HashSet()
 
-        commits.each { commit ->
-            commit.modified.each { fileName ->
-                uniqueFileNames.add(fileName.trim())
+            commits.each { commit ->
+                (commit.modified ?: []).each { fileName ->
+                    uniqueFileNames.add(fileName.trim())
+                }
+                (commit.added ?: []).each { fileName ->
+                    uniqueFileNames.add(fileName.trim())
+                }
             }
-            commit.added.each { fileName ->
-                uniqueFileNames.add(fileName.trim())
-            }
-        }
 
-        dir("${env.SCANOSS_BUILD_BASE_PATH}/repository") {
-            uniqueFileNames.each { file ->
-                def sourcePath = "${file}"
-                def destinationPath = "${destinationFolder}"
-                sh "cp --parents ${sourcePath} ${destinationPath}"
+            dir("${env.SCANOSS_BUILD_BASE_PATH}/repository") {
+                uniqueFileNames.each { file ->
+                    def sourcePath = "${file}"
+                    def destinationPath = "${destinationFolder}"
+                    sh "cp --parents ${sourcePath} ${destinationPath} || true"
+                }
             }
+        } catch (Exception e) {
+            echo "Error in delta scan: ${e.message}"
+            echo "Proceeding with full scan"
         }
     } else {
         echo 'Delta Scan Analysis disabled or manual trigger used'
